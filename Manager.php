@@ -1,7 +1,7 @@
 <?php
 /**
  * @link http://pagination.ru/
- * @author Vasiliy Makogon
+ * @author Vasiliy Makogon, makogon.vs@gmail.com
  */
 class Krugozor_Pagination_Manager
 {
@@ -13,6 +13,16 @@ class Krugozor_Pagination_Manager
      * @var int
      */
     private $limit;
+
+    /**
+     * Количество ссылок на страницы, выводящихся
+     * между ссылками-метками пагинатора << и >>.
+     * Фактически, это количество ссылок с числовыми
+     * индексами в ссылочном блоке.
+     *
+     * @var int
+     */
+    private $link_count;
 
     /**
      * Номер текущей страницы.
@@ -39,7 +49,6 @@ class Krugozor_Pagination_Manager
      * Конечное значение для SQL-оператора LIMIT.
      *
      * @var int
-     * @todo
      */
     private $stop_limit;
 
@@ -52,16 +61,7 @@ class Krugozor_Pagination_Manager
     private $total_rows;
 
     /**
-     * Количество ссылок на страницы, выводящихся
-     * между ссылками-метками пагинатора << и >>.
-     * Фактически, это количество ссылок в ссылочном блоке.
-     *
-     * @var int
-     */
-    private $link_count;
-
-    /**
-     * Количество страниц, которое получится, если на одну страницу
+     * Количество страниц пагинатора, которое получится, если на одну страницу
      * необходимо выводить $this->limit записей из базы.
      *
      * @var int
@@ -69,57 +69,61 @@ class Krugozor_Pagination_Manager
     private $total_pages;
 
     /**
-     * Количество блоков страниц, на которые будет разделена БД.
+     * Количество ссылочных блоков, на которые будет разделена БД.
      *
      * @var int
      */
     private $total_blocks;
 
     /**
-     * Имя переменной из запроса, которая будет указывать страницу.
+     * Имя переменной из Request, значение которой будет указывать страницу.
      *
      * @var int
      */
     private $page_var_name;
 
     /**
-     * Имя GET-переменной из запроса, которая будет указывать блок страниц (сепаратор).
+     * Имя переменной из Request, значение которой будет указывать блок страниц (сепаратор).
      *
      * @var int
      */
     private $separator_var_name;
 
     /**
-     * @param int $limit - количество записей на страницу
-     * @param int $link_count - количество ссылок между метками << и >>
-     * @param string $page_var_name - имя ключа переменной, из глобального ассоциативного массива,
-     *                                указывающей страницу для открытия.
-     * @param string $separator_var_name - имя ключа переменной из глобального ассоциативного массива,
-     *                                     указывающей блок страниц для открытия.
-     * @param string $request - имя глобального ассоциативного массива ("GET", "POST" или "REQUEST"),
-     *                          из которого ожидаюся переменные с именами $page_var_name и $separator_var_name.
+     * @param int $limit - количество записей из таблицы СУБД на страницу
+     * @param int $link_count - количество ссылок на страницы между ссылками пагинатора, т.е.:
+     *                          «««  ««  «  $link_count  »  »»  »»»
+     * @param mixed $request Krugozor_Http_Request|$_REQUEST - объект запроса Krugozor_Http_Request или один из
+     *                                                         суперглобальных массивов $_REQUEST, $_GET или $_POST.
+     * @param string $page_var_name - имя ключа переменной из запроса, указывающей страницу для открытия.
+     * @param string $separator_var_name - имя ключа переменной из запроса, указывающей блок страниц (сепаратор).
      * @return void
      */
-    public function __construct($limit, $link_count, $page_var_name = 'page', $separator_var_name = 'sep', $request = 'REQUEST')
+    public function __construct($limit = 10, $link_count = 10, $request, $page_var_name = 'page', $separator_var_name = 'sep')
     {
-        $this->limit = intval($limit);
-        $this->link_count = intval($link_count);
+        $this->limit = (int) $limit;
+        $this->link_count = (int) $link_count;
 
-        $this->page_var_name = $page_var_name;
-        $this->separator_var_name = $separator_var_name;
+        $this->page_var_name = (string) $page_var_name;
+        $this->separator_var_name = (string) $separator_var_name;
 
-        $request_array_name = '_' . ltrim($request, '_');
-        $request = eval("return \$$request_array_name;");
+        // Для фреймворка.
+        if (is_object($request) && $request instanceof Krugozor_Http_Request)
+        {
+            $this->current_sep  = $request->getRequest($separator_var_name, 'decimal') ?: 1;
+            $this->current_page = $request->getRequest($page_var_name, 'decimal') ?: ($this->current_sep - 1) * $this->link_count + 1;
+        }
+        // Для внедрения в любой сторонний код.
+        else if (is_array($request) && $request)
+        {
+            $this->current_sep = !empty($request[$separator_var_name]) && is_numeric($request[$separator_var_name])
+                                 ? intval($request[$separator_var_name])
+                                 : 1;
 
-        // Определяем текущий сепаратор.
-        $this->current_sep = isset($request[$separator_var_name]) && is_numeric($request[$separator_var_name])
-                            ? intval($request[$separator_var_name])
-                            : 1;
-
-        // Определяем номер текущей страницы
-        $this->current_page = isset($request[$page_var_name]) && is_numeric($request[$page_var_name])
-                             ? intval($request[$page_var_name])
-                             : ($this->current_sep - 1) * $this->link_count + 1;
+            $this->current_page = !empty($request[$page_var_name]) && is_numeric($request[$page_var_name])
+                                  ? intval($request[$page_var_name])
+                                  : ($this->current_sep - 1) * $this->link_count + 1;
+        }
 
         $this->start_limit = ($this->current_page - 1) * $this->limit;
         $this->stop_limit  = $this->limit;
@@ -160,12 +164,11 @@ class Krugozor_Pagination_Manager
 
     /**
      * Принимает числовое значение - общее количество записей в базе,
-     * а также вычисляет все необходимые переменные для
-     * формирования строки навигации.
+     * а также вычисляет все необходимые переменные для формирования строки навигации.
      *
      * Я пытался рефакторить алгоритм данного метода, но качественно сделать этого не удалось
      * в виду давности написания данного класса. Короче говоря, я сам уже не в состоянии понять, как
-     * это работает. Но это работает.
+     * это работает. Но это работает!
      *
      * @param int
      * @return void
@@ -179,10 +182,6 @@ class Krugozor_Pagination_Manager
         // Если количество блоков больше всех страниц, то
         // за количество блоков берём количество всех страниц.
         $this->total_blocks = ($this->total_blocks > $this->total_pages) ? $this->total_pages : $this->total_blocks;
-
-        // Сколько записей ДОЛЖНО быть при данном количестве $this->total_blocks, что бы они полность заполнили станицы.
-        // Т.е. теоретически, для двух блоков, выводящих по 3 записи, общее количество записей должно быть равно 6.
-        // $this->teoretic_max_count = $this->limit * $this->total_pages;
 
         // Основной массив значений для вывода в шаблоне.
         $this->table = array();
@@ -236,7 +235,7 @@ class Krugozor_Pagination_Manager
     }
 
     /**
-     * Возвращает номер сепаратора для формирования ссылки "На предыдущий блок страниц" (<<).
+     * Возвращает номер сепаратора для формирования ссылки (««).
      *
      * @param void
      * @return int
@@ -247,7 +246,7 @@ class Krugozor_Pagination_Manager
     }
 
     /**
-     * Возвращает номер сепаратора для формирования ссылки "На следующий блок страниц" (>>).
+     * Возвращает номер сепаратора для формирования ссылки (»»).
      *
      * @param void
      * @return int
@@ -258,7 +257,7 @@ class Krugozor_Pagination_Manager
     }
 
     /**
-     * Возвращает номер сепаратора для формирования ссылки "На последнюю страницу" (>>>).
+     * Возвращает номер сепаратора для формирования ссылки (»»»).
      *
      * @param void
      * @return int
@@ -269,7 +268,18 @@ class Krugozor_Pagination_Manager
     }
 
     /**
-     * Возвращает номер страницы для формирования ссылки "На последнюю страницу" (>>>).
+     * Возвращает номер страницы для формирования ссылки («««).
+     *
+     * @param void
+     * @return int
+     */
+    public function getFirstPage()
+    {
+        return $this->limit;
+    }
+
+    /**
+     * Возвращает номер страницы для формирования ссылки (»»»).
      *
      * @param void
      * @return int
@@ -313,7 +323,7 @@ class Krugozor_Pagination_Manager
     }
 
     /**
-     * Возвращает номер сепаратора для формирования ссылки "На предыдущую страницу" (<).
+     * Возвращает номер сепаратора для формирования ссылки («).
      *
      * @param void
      * @return int
@@ -331,7 +341,7 @@ class Krugozor_Pagination_Manager
     }
 
     /**
-     * Возвращает номер сепаратора для формирования ссылки "На следующую страницу" (>).
+     * Возвращает номер сепаратора для формирования ссылки (»).
      *
      * @param void
      * @return int
@@ -349,7 +359,7 @@ class Krugozor_Pagination_Manager
     }
 
     /**
-     * Возвращает номер страницы для формирования ссылки "На предыдущую страницу" (<).
+     * Возвращает номер страницы для формирования ссылки («).
      *
      * @param void
      * @return int
@@ -360,7 +370,18 @@ class Krugozor_Pagination_Manager
     }
 
     /**
-     * Возвращает номер страницы для формирования ссылки "На следующую страницу" (>).
+     * Возвращает номер страницы для формирования ссылки (««).
+     *
+     * @param void
+     * @return int
+     */
+    public function getPageForPreviousBlock()
+    {
+        return $this->current_page - ($this->current_page % $this->link_count ?: $this->link_count);
+    }
+
+    /**
+     * Возвращает номер страницы для формирования ссылки (»).
      *
      * @param void
      * @return int
