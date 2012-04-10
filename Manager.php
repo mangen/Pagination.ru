@@ -114,7 +114,7 @@ class Krugozor_Pagination_Manager
             $this->current_page = $request->getRequest($page_var_name, 'decimal') ?: ($this->current_sep - 1) * $this->link_count + 1;
         }
         // Для внедрения в любой сторонний код.
-        else if (is_array($request) && $request)
+        else if (is_array($request))
         {
             $this->current_sep = !empty($request[$separator_var_name]) && is_numeric($request[$separator_var_name])
                                  ? intval($request[$separator_var_name])
